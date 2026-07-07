@@ -3,7 +3,7 @@ include batocera-board.common
 # Target definition
 BR2_x86_64=y
 BR2_PACKAGE_BATOCERA_TARGET_X86_64=y
-BR2_TARGET_OPTIMIZATION="-pipe -fsigned-char"
+BR2_TARGET_OPTIMIZATION="-pipe -fsigned-char -march=x86-64-v2 -mtune=bdver3"
 #BR2_TARGET_GENERIC_GETTY_PORT="tty1"
 BR2_TARGET_GENERIC_GETTY_BAUDRATE_115200=y
 BR2_GLOBAL_PATCH_DIR="$(BR2_EXTERNAL_BATOCERA_PATH)/board/batocera/patches $(BR2_EXTERNAL_BATOCERA_PATH)/board/batocera/x86/patches"
@@ -42,3 +42,13 @@ BR2_PACKAGE_BATOCERA_SPLASH_MPV=y
 BR2_TARGET_GRUB2=y
 BR2_TARGET_GRUB2_I386_EFI=y
 BR2_TARGET_GRUB2_BUILTIN_MODULES_EFI="boot linux ext2 fat squash4 part_msdos part_gpt normal efi_gop echo"
+
+# Disable ikemen - Go module dependencies fail to resolve during container build
+# BR2_PACKAGE_IKEMEN is not set
+
+# Workaround for rootless Podman build environments where tar fails to restore file ownerships
+BR2_TAR_OPTIONS="--no-same-owner"
+
+# Enable Wayland & XWayland
+BR2_PACKAGE_BATOCERA_WAYLAND_LABWC=y
+BR2_PACKAGE_BATOCERA_XWAYLAND=y

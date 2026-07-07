@@ -16,10 +16,6 @@ ifeq ($(BR2_PACKAGE_WAYLAND),y)
 GRIM_DEPENDENCIES += wayland wayland-protocols
 endif
 
-GRIM_CONF_OPTS = -Dman-pages=disabled -Dwerror=false
-
-ifeq ($(BR2_riscv),y)
-GRIM_CONF_OPTS += -Djpeg=disabled
-endif
+GRIM_CONF_OPTS = -Dman-pages=disabled -Dwerror=false -Djpeg=disabled
 
 $(eval $(meson-package))
