@@ -1,0 +1,158 @@
+#!/bin/bash
+
+PID_FILE="/var/run/batocera-record.pid"
+RECORDINGS_DIR="/userdata/recordings"
+
+_get_quality() {
+    local q
+    q=$(/usr/bin/batocera-settings-get record.quality 2>/dev/null)
+    [ -z "$q" ] && q="medium"
+    echo "$q"
+}
+
+_get_audio() {
+    local a
+    a=$(/usr/bin/batocera-settings-get record.audio 2>/dev/null)
+    [ -z "$a" ] && a="1"
+    echo "$a"
+}
+
+_is_running() {
+    if [ -f "$PID_FILE" ]; then
+        local pid
+        pid=$(cat "$PID_FILE" 2>/dev/null)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            return 0
+        fi
+        rm -f "$PID_FILE"
+    fi
+    return 1
+}
+
+_find_gamescope_pw_node() {
+    local node
+    node=$(pw-dump 2>/dev/null | jq -r '
+        .[] | select(.type == "PipeWire:Interface:Node") |
+        select(.info.props["media.class"] == "Video/Source") |
+        select((.info.props["node.name"] // "" | test("gamescope"; "i")) or (.info.props["node.description"] // "" | test("gamescope"; "i"))) |
+        .id' | head -n1)
+    if [ -z "$node" ] || [ "$node" = "null" ]; then
+        node=$(pw-dump 2>/dev/null | jq -r '
+            .[] | select(.type == "PipeWire:Interface:Node") |
+            select(.info.props["media.class"] == "Video/Source") |
+            .id' | head -n1)
+    fi
+    echo "$node"
+}
+
+case "$1" in
+    status)
+        if _is_running; then
+            echo "recording"
+        else
+            echo "stopped"
+        fi
+        exit 0
+        ;;
+    is_running)
+        _is_running
+        exit $?
+        ;;
+    stop)
+        if _is_running; then
+            pid=$(cat "$PID_FILE")
+            kill -INT "$pid" 2>/dev/null
+            for _ in $(seq 1 50); do
+                kill -0 "$pid" 2>/dev/null || break
+                sleep 0.1
+            done
+            kill -0 "$pid" 2>/dev/null && kill -TERM "$pid" 2>/dev/null
+            rm -f "$PID_FILE"
+        fi
+        exit 0
+        ;;
+    get-quality)
+        _get_quality
+        exit 0
+        ;;
+    get-audio)
+        _get_audio
+        exit 0
+        ;;
+    get-all)
+        echo "quality=$(_get_quality)"
+        echo "audio=$(_get_audio)"
+        exit 0
+        ;;
+    set-quality)
+        /usr/bin/batocera-settings-set record.quality "$2"
+        exit 0
+        ;;
+    set-audio)
+        /usr/bin/batocera-settings-set record.audio "$2"
+        exit 0
+        ;;
+    set-all)
+        /usr/bin/batocera-settings-set record.quality "$2"
+        /usr/bin/batocera-settings-set record.audio "$3"
+        exit 0
+        ;;
+    start)
+        if _is_running; then
+            echo "batocera-record: already running" >&2
+            exit 1
+        fi
+
+        PW_NODE=$(_find_gamescope_pw_node)
+        if [ -z "$PW_NODE" ] || [ "$PW_NODE" = "null" ]; then
+            echo "batocera-record: no PipeWire Video/Source node found" >&2
+            exit 1
+        fi
+
+        QUALITY=$(_get_quality)
+        AUDIO=$(_get_audio)
+        mkdir -p "$RECORDINGS_DIR"
+        OUTPUT="${2:-${RECORDINGS_DIR}/recording-$(date +%Y.%m.%d-%Hh%M.%S).mkv}"
+
+        case "$QUALITY" in
+            low)       BITRATE_KBPS=2500;  QP=28 ;;
+            high)      BITRATE_KBPS=12000; QP=18 ;;
+            ultrahigh) BITRATE_KBPS=25000; QP=14 ;;
+            *)         BITRATE_KBPS=6000;  QP=22 ;;
+        esac
+
+        if gst-inspect-1.0 vaapih264enc >/dev/null 2>&1 && ls /dev/dri/renderD* >/dev/null 2>&1; then
+            VIDEO_ENC="vaapih264enc rate-control=cbr bitrate=${BITRATE_KBPS}"
+        else
+            VIDEO_ENC="x264enc tune=zerolatency speed-preset=veryfast bitrate=${BITRATE_KBPS} quantizer=${QP}"
+        fi
+
+        AUDIO_BRANCH=""
+        if [ "$AUDIO" != "0" ]; then
+            if [ "$AUDIO" = "2" ]; then
+                AUDIO_DEV=$(pactl get-default-source 2>/dev/null)
+            else
+                DEFAULT_SINK=$(pactl get-default-sink 2>/dev/null)
+                [ -n "$DEFAULT_SINK" ] && AUDIO_DEV="${DEFAULT_SINK}.monitor"
+            fi
+            if [ -n "$AUDIO_DEV" ]; then
+                AUDIO_BRANCH="pulsesrc device=${AUDIO_DEV} ! audioconvert ! audioresample ! avenc_aac ! queue ! mux."
+            fi
+        fi
+
+        # Launch gst-launch-1.0 -e in background so SIGINT finalizes MKV cleanly
+        # shellcheck disable=SC2086
+        gst-launch-1.0 -e -q \
+            pipewiresrc target-object="${PW_NODE}" do-timestamp=true ! videoconvert ! ${VIDEO_ENC} ! h264parse ! queue ! mux. \
+            ${AUDIO_BRANCH} \
+            matroskamux name=mux ! filesink location="${OUTPUT}" \
+            >/var/log/batocera-record.log 2>&1 &
+
+        echo $! > "$PID_FILE"
+        exit 0
+        ;;
+    *)
+        echo "Usage: $0 {start [FILE]|stop|status|is_running|get-quality|get-audio|get-all|set-quality|set-audio|set-all}" >&2
+        exit 1
+        ;;
+esac

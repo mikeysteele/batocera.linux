@@ -23,23 +23,26 @@ GAMESCOPE_CONF_OPTS = \
 	-Denable_zenity=false \
 	-Denable_tests=false
 else
-GAMESCOPE_DEPENDENCIES = host-glslang glm hwdata libcap libdecor libdisplay-info
-GAMESCOPE_DEPENDENCIES += batocera-luajit libinput libxkbcommon pixman stb udev
-GAMESCOPE_DEPENDENCIES += vulkan-headers vulkan-loader wayland wayland-protocols
-GAMESCOPE_DEPENDENCIES += wlroots xwayland xlib_libX11 xlib_libXcomposite
-GAMESCOPE_DEPENDENCIES += xlib_libXcursor xlib_libXdamage xlib_libXext
-GAMESCOPE_DEPENDENCIES += xlib_libXfixes xlib_libXi xlib_libXmu xlib_libXrender
-GAMESCOPE_DEPENDENCIES += xlib_libXres xlib_libXtst xlib_libXxf86vm
+GAMESCOPE_DEPENDENCIES = host-glslang host-pkgconf host-wayland glm hwdata
+GAMESCOPE_DEPENDENCIES += libcap libdecor libdisplay-info libdrm libliftoff
+GAMESCOPE_DEPENDENCIES += batocera-luajit libinput libxkbcommon pipewire pixman
+GAMESCOPE_DEPENDENCIES += seatd stb udev vulkan-headers vulkan-loader wayland
+GAMESCOPE_DEPENDENCIES += wayland-protocols wlroots xwayland xlib_libX11
+GAMESCOPE_DEPENDENCIES += xlib_libXcomposite xlib_libXcursor xlib_libXdamage
+GAMESCOPE_DEPENDENCIES += xlib_libXext xlib_libXfixes xlib_libXi xlib_libXmu
+GAMESCOPE_DEPENDENCIES += xlib_libXrender xlib_libXres xlib_libXtst
+GAMESCOPE_DEPENDENCIES += xlib_libXxf86vm xlib_libxcvt
 
 # vkroots is header-only and gamescope refuses to build without its own copy
 GAMESCOPE_CONF_OPTS = \
-	-Ddrm_backend=disabled \
+	-Ddrm_backend=enabled \
 	-Dsdl2_backend=disabled \
-	-Dpipewire=disabled \
+	-Dpipewire=enabled \
 	-Davif_screenshots=disabled \
 	-Dinput_emulation=disabled \
 	-Drt_cap=enabled \
 	-Denable_openvr_support=false \
+	-Denable_gamescope_wsi_layer=false \
 	-Denable_zenity=false \
 	-Denable_tests=false \
 	-Dbenchmark=disabled

@@ -1,0 +1,59 @@
+#!/bin/sh
+
+SCREENSHOTS_DIR="/userdata/screenshots"
+TIMER=0
+OUTPUT=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --all)
+            shift
+            ;;
+        --timer)
+            shift
+            TIMER="$1"
+            shift
+            ;;
+        *)
+            OUTPUT="$1"
+            shift
+            ;;
+    esac
+done
+
+if [ "${TIMER}" -gt 0 ] 2>/dev/null; then
+    sleep "${TIMER}"
+fi
+
+if [ -z "${OUTPUT}" ]; then
+    mkdir -p "${SCREENSHOTS_DIR}"
+    OUTPUT="${SCREENSHOTS_DIR}/screenshot-$(date +%Y.%m.%d-%Hh%M.%S).png"
+else
+    mkdir -p "$(dirname "${OUTPUT}")"
+fi
+
+PW_NODE=$(pw-dump 2>/dev/null | jq -r '
+    .[] | select(.type == "PipeWire:Interface:Node") |
+    select(.info.props["media.class"] == "Video/Source") |
+    select((.info.props["node.name"] // "" | test("gamescope"; "i")) or (.info.props["node.description"] // "" | test("gamescope"; "i"))) |
+    .id' | head -n1)
+
+if [ -z "${PW_NODE}" ] || [ "${PW_NODE}" = "null" ]; then
+    PW_NODE=$(pw-dump 2>/dev/null | jq -r '
+        .[] | select(.type == "PipeWire:Interface:Node") |
+        select(.info.props["media.class"] == "Video/Source") |
+        .id' | head -n1)
+fi
+
+if [ -z "${PW_NODE}" ] || [ "${PW_NODE}" = "null" ]; then
+    echo "batocera-screenshot: no PipeWire Video/Source node found" >&2
+    exit 1
+fi
+
+if gst-launch-1.0 -q pipewiresrc target-object="${PW_NODE}" num-buffers=1 ! videoconvert ! pngenc ! filesink location="${OUTPUT}"; then
+    /usr/bin/batocera-flash-screen &
+    exit 0
+else
+    rm -f "${OUTPUT}"
+    exit 1
+fi

@@ -1,0 +1,325 @@
+#!/bin/sh
+
+export LC_ALL=C
+
+log="/userdata/system/logs/display.log"
+MODE_STATE="/var/run/gamescope.mode"
+ROT_STATE="/var/run/gamescope.rotation"
+
+_log() {
+    echo "$1" >> "${log}"
+}
+
+f_usage() {
+    echo "${0} listModes" >&2
+    echo "${0} setMode <MODE>" >&2
+    echo "${0} currentMode" >&2
+    echo "${0} currentResolution" >&2
+    echo "${0} listOutputs" >&2
+    echo "${0} currentOutput" >&2
+    echo "${0} outputModel" >&2
+    echo "${0} setOutput <PRIMARY_OUTPUT> [SECOND_OUTPUT] [THIRD_OUTPUT]" >&2
+    echo "${0} repositionOutputs <left-right|top-bottom> <PRIMARY_OUTPUT> [SECOND_OUTPUT] [THIRD_OUTPUT]" >&2
+    echo "${0} minTomaxResolution [<MAX_RESOLUTION>]" >&2
+    echo "${0} minTomaxResolution-secure [<MAX_RESOLUTION>]" >&2
+    echo "${0} setRotation (0|1|2|3)" >&2
+    echo "${0} getRotation" >&2
+    echo "${0} getDisplayMode" >&2
+    echo "${0} getDisplayComp" >&2
+    echo "${0} refreshRate" >&2
+    echo "${0} supportHdr" >&2
+    echo "${0} setHdr" >&2
+    echo "${0} supportVrr" >&2
+    echo "${0} setVrr" >&2
+}
+
+_hdr_capable() {
+    local card driver name
+    for card in /sys/class/drm/card[0-9]*; do
+        case "${card##*/}" in *-*) continue ;; esac
+        [ -e "${card}/device/driver" ] || continue
+        driver=$(basename "$(readlink -f "${card}/device/driver")")
+        for name in $(modetest -M "${driver}" -c 2>/dev/null | awk -F'\t' '
+            /^[0-9]+\t/ {
+                if (name != "" && cs && md) print name
+                name = ($3 == "connected") ? $4 : ""
+                gsub(/ /, "", name)
+                cs = md = 0
+            }
+            /^\t[0-9]+ Colorspace:/ { cs = 1 }
+            /^\t[0-9]+ HDR_OUTPUT_METADATA:/ { md = 1 }
+            END { if (name != "" && cs && md) print name }'); do
+            edid-decode "${card}-${name}/edid" 2>/dev/null | awk '
+                /Colorimetry Data Block/ { c = 1; next }
+                /Block:/ { c = 0 }
+                c && /BT2020/ { b = 1 }
+                /SMPTE ST2084/ { p = 1 }
+                END { exit !(b && p) }' && return 0
+        done
+    done
+    return 1
+}
+
+_vrr_capable() {
+    local card driver
+    for card in /sys/class/drm/card[0-9]*; do
+        case "${card##*/}" in *-*) continue ;; esac
+        [ -e "${card}/device/driver" ] || continue
+        driver=$(basename "$(readlink -f "${card}/device/driver")")
+        modetest -M "${driver}" -c 2>/dev/null | awk -F'\t' '
+            /^[0-9]+\t/ { connected = ($3 == "connected") }
+            connected && /^\t[0-9]+ vrr_capable:/ { vrr = 1 }
+            connected && vrr && /^\t\tvalue: 1$/ { found = 1; exit }
+            END { exit !found }' && return 0
+    done
+    return 1
+}
+
+_list_connected_outputs() {
+    local st
+    for st in /sys/class/drm/card[0-9]*-*/status; do
+        [ -r "${st}" ] || continue
+        if [ "$(cat "${st}" 2>/dev/null)" = "connected" ]; then
+            local dir="${st%/status}"
+            echo "${dir##*/card[0-9]*-}" | sed 's/^card[0-9]*-//'
+        fi
+    done | awk '!seen[$0]++'
+}
+
+_find_drm_connector_dir() {
+    local out="$1"
+    local d
+    for d in /sys/class/drm/card[0-9]*-"${out}"; do
+        if [ -d "${d}" ] && [ "$(cat "${d}/status" 2>/dev/null)" = "connected" ]; then
+            echo "${d}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+_detect_primary_output() {
+    local cfg
+    cfg=$(/usr/bin/batocera-settings-get global.videooutput 2>/dev/null)
+    if [ -n "${cfg}" ] && _find_drm_connector_dir "${cfg}" >/dev/null; then
+        echo "${cfg}"
+        return 0
+    fi
+    _list_connected_outputs | head -n1
+}
+
+_hz_to_mhz() {
+    awk -v h="$1" 'BEGIN { printf "%.0f", h * 1000 }'
+}
+
+_get_drm_modes() {
+    local out="$1"
+    local cdir card driver
+    cdir=$(_find_drm_connector_dir "${out}") || return 1
+    card="${cdir%/*}/card$(echo "${cdir##*/}" | sed 's/^card\([0-9]*\)-.*/\1/')"
+    if [ -e "${card}/device/driver" ]; then
+        driver=$(basename "$(readlink -f "${card}/device/driver")")
+        modetest -M "${driver}" -c 2>/dev/null | awk -v target="${out}" '
+            /^[0-9]+\t/ { in_target = ($4 == target && $3 == "connected") }
+            in_target && /^  [0-9]+x[0-9]+/ {
+                res = $1
+                hz = $2
+                if (res ~ /^[0-9]+x[0-9]+$/ && hz ~ /^[0-9.]+$/) {
+                    key = res "@" hz "Hz"
+                    if (!seen[key]++) print key
+                }
+            }'
+    fi
+}
+
+_get_current_mode_string() {
+    if [ -s "${MODE_STATE}" ]; then
+        cat "${MODE_STATE}"
+        return 0
+    fi
+    local modes_file cdir first_mode
+    cdir=$(_find_drm_connector_dir "${PSCREEN}") || return 1
+    modes_file="${cdir}/modes"
+    if [ -r "${modes_file}" ]; then
+        first_mode=$(head -n1 "${modes_file}" | sed 's/[pi]$//')
+        if [ -n "${first_mode}" ]; then
+            echo "${first_mode}@60.000Hz"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+f_minTomaxResolution() {
+    local max_res="$1"
+    local max_w max_h best_mode
+    if [ -z "${max_res}" ]; then
+        best_mode=$(_get_drm_modes "${PSCREEN}" | head -n1)
+    else
+        max_w="${max_res%%x*}"
+        max_h="${max_res##*x}"
+        best_mode=$(_get_drm_modes "${PSCREEN}" | awk -F'[@xHz]' -v mw="${max_w}" -v mh="${max_h}" '
+            $1 <= mw && $2 <= mh { print $0; exit }')
+    fi
+    if [ -n "${best_mode}" ]; then
+        echo "${best_mode}" > "${MODE_STATE}"
+    fi
+}
+
+if [ $# -lt 1 ]; then
+    f_usage
+    exit 1
+fi
+
+case "$1" in
+    "getDisplayComp")
+        echo "gamescope"
+        exit 0
+        ;;
+    "getDisplayMode")
+        echo "wayland"
+        exit 0
+        ;;
+    "supportHdr")
+        _hdr_capable
+        exit $?
+        ;;
+    "setHdr")
+        exit 0
+        ;;
+    "supportVrr")
+        _vrr_capable
+        exit $?
+        ;;
+    "setVrr")
+        exit 0
+        ;;
+esac
+
+PSCREEN_ARG=""
+if [ "$1" = "--screen" ]; then
+    shift
+    PSCREEN_ARG="$1"
+    shift
+fi
+
+if [ -n "${PSCREEN_ARG}" ]; then
+    PSCREEN="${PSCREEN_ARG}"
+else
+    PSCREEN=$(_detect_primary_output)
+fi
+
+if [ -z "${PSCREEN}" ]; then
+    _log "Error: Could not determine a screen to operate on."
+    exit 1
+fi
+
+ACTION="$1"
+shift
+
+case "${ACTION}" in
+    "currentMode")
+        CURRENT_MODE_STR=$(_get_current_mode_string)
+        if [ -n "${CURRENT_MODE_STR}" ]; then
+            RES_ONLY=$(echo "${CURRENT_MODE_STR}" | cut -d'@' -f1)
+            REFRESH_HZ_STR=$(echo "${CURRENT_MODE_STR}" | sed -n 's/.*@\([0-9.]*\)Hz/\1/p')
+            if [ -n "${REFRESH_HZ_STR}" ]; then
+                echo "${RES_ONLY}.$(_hz_to_mhz "${REFRESH_HZ_STR}")"
+            else
+                echo "${RES_ONLY}.0"
+            fi
+        else
+            echo "unknown.0"
+            exit 1
+        fi
+        ;;
+    "listModes")
+        echo "max-1920x1080:maximum 1920x1080"
+        echo "max-640x480:maximum 640x480"
+        _get_drm_modes "${PSCREEN}" | while IFS= read -r mode; do
+            resolution=$(echo "${mode}" | cut -d'@' -f1)
+            refresh_hz=$(echo "${mode}" | sed 's/.*@\([0-9.]*\)Hz/\1/')
+            printf "%s.%s:%s %s Hz\n" "${resolution}" "$(_hz_to_mhz "${refresh_hz}")" "${resolution}" "${refresh_hz}"
+        done
+        ;;
+    "setMode")
+        MODE_TO_SET="$1"
+        case "${MODE_TO_SET}" in
+            max-*)
+                f_minTomaxResolution "${MODE_TO_SET#max-}"
+                ;;
+            auto|"")
+                f_minTomaxResolution ""
+                ;;
+            *x*.*)
+                RES="${MODE_TO_SET%%.*}"
+                MHZ="${MODE_TO_SET#*.}"
+                HZ=$(awk -v m="${MHZ}" 'BEGIN { printf "%.3f", m / 1000 }')
+                echo "${RES}@${HZ}Hz" > "${MODE_STATE}"
+                ;;
+        esac
+        ;;
+    "currentResolution")
+        CURRENT_MODE_STR=$(_get_current_mode_string)
+        if [ -z "${CURRENT_MODE_STR}" ]; then
+            echo "unknown"
+            exit 1
+        fi
+        RAW_RESOLUTION=$(echo "${CURRENT_MODE_STR}" | cut -d'@' -f1)
+        RAW_ROTATION=$(cat "${ROT_STATE}" 2>/dev/null || echo "0")
+        if [ "${RAW_ROTATION}" = "1" ] || [ "${RAW_ROTATION}" = "3" ]; then
+            WIDTH=$(echo "${RAW_RESOLUTION}" | cut -dx -f1)
+            HEIGHT=$(echo "${RAW_RESOLUTION}" | cut -dx -f2)
+            echo "${HEIGHT}x${WIDTH}"
+        else
+            echo "${RAW_RESOLUTION}"
+        fi
+        ;;
+    "listOutputs")
+        _list_connected_outputs
+        ;;
+    "currentOutput")
+        echo "${PSCREEN}"
+        ;;
+    "outputModel")
+        cdir=$(_find_drm_connector_dir "${PSCREEN}")
+        if [ -n "${cdir}" ] && [ -r "${cdir}/edid" ]; then
+            edid-decode "${cdir}/edid" 2>/dev/null | sed -n 's/^[[:space:]]*Display Product Name:[[:space:]]*//p' | head -n1 | sed 's/[^A-Za-z0-9]/_/g'
+        fi
+        ;;
+    "minTomaxResolution"|"minTomaxResolution-secure")
+        f_minTomaxResolution "$1"
+        ;;
+    "setOutput"|"repositionOutputs"|"configureWindow")
+        exit 0
+        ;;
+    "setRotation")
+        case "$1" in
+            0|1|2|3) echo "$1" > "${ROT_STATE}" ;;
+            *) echo "0" > "${ROT_STATE}" ;;
+        esac
+        ;;
+    "getRotation")
+        cat "${ROT_STATE}" 2>/dev/null || echo "0"
+        ;;
+    "refreshRate")
+        CURRENT_MODE_STR=$(_get_current_mode_string)
+        if [ -n "${CURRENT_MODE_STR}" ]; then
+            echo "${CURRENT_MODE_STR}" | sed -n 's/.*@\([0-9.]*\)Hz/\1/p'
+        else
+            exit 1
+        fi
+        ;;
+    "supportSystemRotation")
+        exit 0
+        ;;
+    "supportSystemReflection")
+        exit 1
+        ;;
+    *)
+        f_usage
+        exit 1
+        ;;
+esac
+
+exit 0

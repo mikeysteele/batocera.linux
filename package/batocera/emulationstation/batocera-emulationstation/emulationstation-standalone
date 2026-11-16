@@ -27,6 +27,9 @@ fi
 _wait_for_compositor() {
     # If not in a Wayland session, no need to wait.
     if [ -z "$WAYLAND_DISPLAY" ]; then return 0; fi
+    if [ "$(batocera-resolution getDisplayComp)" = "gamescope" ]; then
+        return 0
+    fi
     local i=0
     echo "Standalone: Waiting for Wayland compositor..." >> "$log"
     while [ "$i" -lt 50 ]; do # 5 second timeout

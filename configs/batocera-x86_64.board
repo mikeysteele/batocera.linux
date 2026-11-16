@@ -49,6 +49,6 @@ BR2_TARGET_GRUB2_BUILTIN_MODULES_EFI="boot linux ext2 fat squash4 part_msdos par
 # Workaround for rootless Podman build environments where tar fails to restore file ownerships
 BR2_TAR_OPTIONS="--no-same-owner"
 
-# Enable Wayland & XWayland
-BR2_PACKAGE_BATOCERA_WAYLAND_LABWC=y
+# Enable Wayland & XWayland (using gamescope)
+BR2_PACKAGE_BATOCERA_WAYLAND_GAMESCOPE=y
 BR2_PACKAGE_BATOCERA_XWAYLAND=y

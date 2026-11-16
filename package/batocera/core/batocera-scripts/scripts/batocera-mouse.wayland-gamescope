@@ -1,0 +1,11 @@
+#!/bin/sh
+
+case "$1" in
+    show|hide)
+        exit 0
+        ;;
+    *)
+        echo "Usage: $0 {show|hide}" >&2
+        exit 1
+        ;;
+esac
