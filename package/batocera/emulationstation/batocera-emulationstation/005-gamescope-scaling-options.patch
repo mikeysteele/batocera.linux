@@ -1,0 +1,66 @@
+--- a/es-app/src/guis/GuiMenu.cpp
++++ b/es-app/src/guis/GuiMenu.cpp
+@@ -1916,6 +1916,63 @@ void GuiMenu::openSystemSettings()
+ 		});
+ 	}
+ 
++	if (Utils::FileSystem::exists("/usr/bin/gamescope"))
++	{
++		auto optionsGsFilter = std::make_shared<OptionListComponent<std::string> >(mWindow, _("GAMESCOPE UPSCALER FILTER"), false);
++		std::string selectedGsFilter = SystemConf::getInstance()->get("display.gamescope.filter");
++		if (selectedGsFilter.empty())
++			selectedGsFilter = "auto";
++		optionsGsFilter->add(_("AUTO"), "auto", selectedGsFilter == "auto");
++		optionsGsFilter->add("LINEAR", "linear", selectedGsFilter == "linear");
++		optionsGsFilter->add("NEAREST", "nearest", selectedGsFilter == "nearest");
++		optionsGsFilter->add("FSR", "fsr", selectedGsFilter == "fsr");
++		optionsGsFilter->add("NIS", "nis", selectedGsFilter == "nis");
++		optionsGsFilter->add("PIXEL", "pixel", selectedGsFilter == "pixel");
++		optionsGsFilter->add("SGSR", "sgsr", selectedGsFilter == "sgsr");
++		s->addWithLabel(_("GAMESCOPE UPSCALER FILTER"), optionsGsFilter);
++		s->addSaveFunc([optionsGsFilter, s] {
++			if (optionsGsFilter->changed()) {
++				std::string val = optionsGsFilter->getSelected();
++				SystemConf::getInstance()->set("display.gamescope.filter", val == "auto" ? "" : val);
++				s->setVariable("exitreboot", true);
++			}
++		});
++
++		auto optionsGsScaler = std::make_shared<OptionListComponent<std::string> >(mWindow, _("GAMESCOPE UPSCALER MODE"), false);
++		std::string selectedGsScaler = SystemConf::getInstance()->get("display.gamescope.scaler");
++		if (selectedGsScaler.empty())
++			selectedGsScaler = "auto";
++		optionsGsScaler->add(_("AUTO"), "auto", selectedGsScaler == "auto");
++		optionsGsScaler->add("INTEGER", "integer", selectedGsScaler == "integer");
++		optionsGsScaler->add("FIT", "fit", selectedGsScaler == "fit");
++		optionsGsScaler->add("FILL", "fill", selectedGsScaler == "fill");
++		optionsGsScaler->add("STRETCH", "stretch", selectedGsScaler == "stretch");
++		s->addWithLabel(_("GAMESCOPE UPSCALER MODE"), optionsGsScaler);
++		s->addSaveFunc([optionsGsScaler, s] {
++			if (optionsGsScaler->changed()) {
++				std::string val = optionsGsScaler->getSelected();
++				SystemConf::getInstance()->set("display.gamescope.scaler", val == "auto" ? "" : val);
++				s->setVariable("exitreboot", true);
++			}
++		});
++
++		auto optionsGsSharp = std::make_shared<OptionListComponent<std::string> >(mWindow, _("GAMESCOPE FSR SHARPNESS"), false);
++		std::string selectedGsSharp = SystemConf::getInstance()->get("display.gamescope.sharpness");
++		if (selectedGsSharp.empty())
++			selectedGsSharp = "auto";
++		optionsGsSharp->add(_("AUTO"), "auto", selectedGsSharp == "auto");
++		for (const char* lvl : { "0", "2", "5", "8", "10", "12", "15", "20" })
++			optionsGsSharp->add(lvl, lvl, selectedGsSharp == lvl);
++		s->addWithLabel(_("GAMESCOPE FSR SHARPNESS"), optionsGsSharp);
++		s->addSaveFunc([optionsGsSharp, s] {
++			if (optionsGsSharp->changed()) {
++				std::string val = optionsGsSharp->getSelected();
++				SystemConf::getInstance()->set("display.gamescope.sharpness", val == "auto" ? "" : val);
++				s->setVariable("exitreboot", true);
++			}
++		});
++	}
++
+ 	// splash
+ 	auto optionsSplash = std::make_shared<OptionListComponent<std::string> >(mWindow, _("BOOT SPLASH"), false);
+ 
