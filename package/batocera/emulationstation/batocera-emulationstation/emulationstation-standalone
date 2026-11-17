@@ -515,6 +515,10 @@ while [ -e "${REBOOT_FLAG}" ]; do
         rm -f "${REBOOT_FLAG}"
         break
     elif [ -e "/tmp/restart.please" ]; then
+        if [ "$(batocera-resolution getDisplayComp)" = "gamescope" ]; then
+            echo "Standalone: ES restart requested under gamescope. Exiting to relaunch compositor." >> "$log"
+            break
+        fi
         echo "Standalone: ES restart requested. Continuing loop." >> "$log"
     elif [ -e "/tmp/suspend.please" ]; then
         echo "Standalone: ES suspend requested. Waiting for resume signal." >> "$log"

@@ -132,9 +132,46 @@ _get_drm_modes() {
     fi
 }
 
+_get_active_crtc_mode() {
+    local out="$1"
+    local cdir card driver
+    cdir=$(_find_drm_connector_dir "${out}") || return 1
+    card="${cdir%/*}/card$(echo "${cdir##*/}" | sed 's/^card\([0-9]*\)-.*/\1/')"
+    [ -e "${card}/device/driver" ] || return 1
+    driver=$(basename "$(readlink -f "${card}/device/driver")")
+    modetest -M "${driver}" -c -p 2>/dev/null | awk -v target="${out}" '
+        /^Connectors:/ { sec = "conn"; next }
+        /^CRTCs:/ { sec = "crtc"; next }
+        /^[A-Z][a-z]+:/ { sec = ""; next }
+        sec == "conn" && /^[0-9]+\t/ {
+            in_target = ($4 == target && $3 == "connected")
+            if (in_target) enc = $2
+        }
+        sec == "conn" && in_target && /^\tencoders:/ { next }
+        sec == "crtc" && /^[0-9]+\t/ {
+            # id fb pos size ...
+            crtc_id = $1; fb = $2; size = $4
+            in_crtc = (fb != "0")
+            next
+        }
+        sec == "crtc" && in_crtc && /^  #0 / {
+            # #0 3840x2160 60.00 ...
+            if ($2 ~ /^[0-9]+x[0-9]+$/ && $3 ~ /^[0-9.]+$/) {
+                print $2 "@" $3 "Hz"
+                exit
+            }
+        }'
+}
+
 _get_current_mode_string() {
     if [ -s "${MODE_STATE}" ]; then
         cat "${MODE_STATE}"
+        return 0
+    fi
+    local active
+    active=$(_get_active_crtc_mode "${PSCREEN}")
+    if [ -n "${active}" ]; then
+        echo "${active}"
         return 0
     fi
     local modes_file cdir first_mode
@@ -185,6 +222,11 @@ case "$1" in
         exit $?
         ;;
     "setHdr")
+        if [ "$(/usr/bin/batocera-settings-get display.hdr 2>/dev/null)" = "1" ] && _hdr_capable; then
+            gamescopectl hdr_enabled 1 >/dev/null 2>&1 || true
+        else
+            gamescopectl hdr_enabled 0 >/dev/null 2>&1 || true
+        fi
         exit 0
         ;;
     "supportVrr")
@@ -192,6 +234,11 @@ case "$1" in
         exit $?
         ;;
     "setVrr")
+        if [ "$(/usr/bin/batocera-settings-get display.vrr 2>/dev/null)" = "1" ] && _vrr_capable; then
+            gamescopectl adaptive_sync 1 >/dev/null 2>&1 || true
+        else
+            gamescopectl adaptive_sync 0 >/dev/null 2>&1 || true
+        fi
         exit 0
         ;;
 esac
