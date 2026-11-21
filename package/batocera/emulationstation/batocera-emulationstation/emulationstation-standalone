@@ -514,12 +514,6 @@ while [ -e "${REBOOT_FLAG}" ]; do
         echo "Standalone: Shutdown or reboot requested by ES. Exiting loop." >> "$log"
         rm -f "${REBOOT_FLAG}"
         break
-    elif [ -e "/tmp/restart.please" ]; then
-        if [ "$(batocera-resolution getDisplayComp)" = "gamescope" ]; then
-            echo "Standalone: ES restart requested under gamescope. Exiting to relaunch compositor." >> "$log"
-            break
-        fi
-        echo "Standalone: ES restart requested. Continuing loop." >> "$log"
     elif [ -e "/tmp/suspend.please" ]; then
         echo "Standalone: ES suspend requested. Waiting for resume signal." >> "$log"
         rm -f "/tmp/suspend.please"
@@ -529,6 +523,11 @@ while [ -e "${REBOOT_FLAG}" ]; do
         else
             echo "Standalone: WARNING: resume pipe read failed ($(date '+%H:%M:%S')), relaunching ES without a resume signal." >> "$log"
         fi
+    elif [ "$(batocera-resolution getDisplayComp)" = "gamescope" ]; then
+        echo "Standalone: ES exited under gamescope. Exiting to allow gamescope-launch to relaunch compositor." >> "$log"
+        break
+    elif [ -e "/tmp/restart.please" ]; then
+        echo "Standalone: ES restart requested. Continuing loop." >> "$log"
     fi
     GAMELAUNCH=0
 done

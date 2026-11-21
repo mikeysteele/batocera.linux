@@ -81,7 +81,8 @@ _list_connected_outputs() {
         [ -r "${st}" ] || continue
         if [ "$(cat "${st}" 2>/dev/null)" = "connected" ]; then
             local dir="${st%/status}"
-            echo "${dir##*/card[0-9]*-}" | sed 's/^card[0-9]*-//'
+            local name="${dir##*/}"
+            echo "${name#card*-}"
         fi
     done | awk '!seen[$0]++'
 }
@@ -191,15 +192,25 @@ f_minTomaxResolution() {
     local max_res="$1"
     local max_w max_h best_mode
     if [ -z "${max_res}" ]; then
-        best_mode=$(_get_drm_modes "${PSCREEN}" | head -n1)
-    else
-        max_w="${max_res%%x*}"
-        max_h="${max_res##*x}"
-        best_mode=$(_get_drm_modes "${PSCREEN}" | awk -F'[@xHz]' -v mw="${max_w}" -v mh="${max_h}" '
-            $1 <= mw && $2 <= mh { print $0; exit }')
+        # Keep mode already configured by gamescope-launch if present
+        if [ -s "${MODE_STATE}" ]; then
+            return 0
+        fi
+        max_res="$(/usr/bin/batocera-settings-get-master es.resolution 2>/dev/null)"
+        case "${max_res}" in
+            max-*) max_res="${max_res#max-}" ;;
+            *x*.*) max_res="${max_res%%.*}" ;;
+            *)     max_res="1920x1080" ;;
+        esac
     fi
+    max_w="${max_res%%x*}"
+    max_h="${max_res##*x}"
+    best_mode=$(_get_drm_modes "${PSCREEN}" | awk -F'[@xHz]' -v mw="${max_w}" -v mh="${max_h}" '
+        $1 <= mw && $2 <= mh { print $0; exit }')
     if [ -n "${best_mode}" ]; then
         echo "${best_mode}" > "${MODE_STATE}"
+    elif [ -n "${max_w}" ] && [ -n "${max_h}" ]; then
+        echo "${max_w}x${max_h}@60.000Hz" > "${MODE_STATE}"
     fi
 }
 

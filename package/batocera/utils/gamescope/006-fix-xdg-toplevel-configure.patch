@@ -1,0 +1,40 @@
+--- a/src/wlserver.cpp
++++ b/src/wlserver.cpp
+@@ -213,8 +213,17 @@ void xwayland_surface_commit(struct wlr_surface *wlr_surface) {
+ 	{
+ 		if ( !wlserver_xdg_surface_info->bDoneConfigure )
+ 		{
+-			if ( wlserver_xdg_surface_info->xdg_surface )
++			if ( wlserver_xdg_surface_info->xdg_surface )
++			{
++				if ( wlserver_xdg_surface_info->xdg_surface->role == WLR_XDG_SURFACE_ROLE_TOPLEVEL &&
++					 wlserver_xdg_surface_info->xdg_surface->toplevel )
++				{
++					wlr_xdg_toplevel_set_size( wlserver_xdg_surface_info->xdg_surface->toplevel, g_nNestedWidth, g_nNestedHeight );
++					wlr_xdg_toplevel_set_fullscreen( wlserver_xdg_surface_info->xdg_surface->toplevel, true );
++					wlr_xdg_toplevel_set_activated( wlserver_xdg_surface_info->xdg_surface->toplevel, true );
++				}
+ 				wlr_xdg_surface_schedule_configure( wlserver_xdg_surface_info->xdg_surface );
++			}
+ 
+ 			if ( wlserver_xdg_surface_info->layer_surface )
+ 				wlr_layer_surface_v1_configure( wlserver_xdg_surface_info->layer_surface, g_nNestedWidth, g_nNestedHeight );
+@@ -2514,16 +2523,16 @@ void wlserver_keyboardfocus( struct wlr_surface *surface, bool bConstrain )
+ 			auto wl_surf = get_wl_surface_info( wlserver.kb_focus_surface );
+ 			if ( wl_surf && wl_surf->xdg_surface ) {
+ 				auto old_xdg = wlr_xdg_surface_try_from_wlr_surface( wlserver.kb_focus_surface );
+-				if ( old_xdg && old_xdg->toplevel )
++				if ( old_xdg && old_xdg->role == WLR_XDG_SURFACE_ROLE_TOPLEVEL && old_xdg->toplevel )
+ 					wlr_xdg_toplevel_set_activated( old_xdg->toplevel, false );
+ 			}
+ 		}
+ 
+ 		if ( surface ) {
+ 			auto wl_surf = get_wl_surface_info( surface );
+ 			if ( wl_surf && wl_surf->xdg_surface ) {
+ 				auto new_xdg = wlr_xdg_surface_try_from_wlr_surface( surface );
+-				if ( new_xdg && new_xdg->toplevel )
++				if ( new_xdg && new_xdg->role == WLR_XDG_SURFACE_ROLE_TOPLEVEL && new_xdg->toplevel )
+ 					wlr_xdg_toplevel_set_activated( new_xdg->toplevel, true );
+ 			}
+ 		}

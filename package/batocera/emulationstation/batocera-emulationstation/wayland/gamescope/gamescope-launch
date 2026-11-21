@@ -4,6 +4,7 @@ log="/var/log/gamescope.log"
 : > "$log"
 
 export XDG_RUNTIME_DIR=/var/run
+REBOOT_FLAG="/var/run/emulationstation-standalone"
 
 # Wait briefly for a DRM card to appear
 i=0
@@ -29,13 +30,15 @@ while true; do
 
     # Preferred output from batocera.conf
     VIDEO_OUTPUT="$(/usr/bin/batocera-settings-get global.videooutput 2>/dev/null)"
-    if [ -n "$VIDEO_OUTPUT" ]; then
+    if [ -n "$VIDEO_OUTPUT" ] && [ "$VIDEO_OUTPUT" != "auto" ]; then
         GS_ARGS+=(-O "$VIDEO_OUTPUT")
     fi
 
     # Video mode: es.resolution first, then global.videomode (WxH.Hz, max-WxH, or auto)
-    VIDEO_MODE="$(/usr/bin/batocera-settings-get es.resolution 2>/dev/null)"
-    [ -z "$VIDEO_MODE" ] || [ "$VIDEO_MODE" = "auto" ] && VIDEO_MODE="$(/usr/bin/batocera-settings-get global.videomode 2>/dev/null)"
+    VIDEO_MODE="$(/usr/bin/batocera-settings-get-master es.resolution 2>/dev/null)"
+    if [ -z "$VIDEO_MODE" ] || [ "$VIDEO_MODE" = "auto" ]; then
+        VIDEO_MODE="$(/usr/bin/batocera-settings-get-master global.videomode 2>/dev/null)"
+    fi
     if [ -n "$VIDEO_MODE" ] && [ "$VIDEO_MODE" != "auto" ]; then
         case "$VIDEO_MODE" in
             max-*)
@@ -43,7 +46,7 @@ while true; do
                 MAX_W="${MAX_RES%%x*}"
                 MAX_H="${MAX_RES##*x}"
                 if [ -n "$MAX_W" ] && [ -n "$MAX_H" ]; then
-                    GS_ARGS+=(-W "$MAX_W" -H "$MAX_H")
+                    GS_ARGS+=(-w "$MAX_W" -h "$MAX_H" -W "$MAX_W" -H "$MAX_H")
                     echo "${MAX_W}x${MAX_H}@60.000Hz" > /var/run/gamescope.mode
                 fi
                 ;;
@@ -54,7 +57,7 @@ while true; do
                 HZ_RAW="${VIDEO_MODE#*.}"
                 HZ_INT=$(awk -v h="$HZ_RAW" 'BEGIN { if (h > 1000) printf "%.0f", h/1000; else printf "%.0f", h }')
                 if [ -n "$W" ] && [ -n "$H" ]; then
-                    GS_ARGS+=(-W "$W" -H "$H")
+                    GS_ARGS+=(-w "$W" -h "$H" -W "$W" -H "$H")
                     if [ -n "$HZ_INT" ] && [ "$HZ_INT" -gt 0 ] 2>/dev/null; then
                         GS_ARGS+=(-r "$HZ_INT")
                         echo "${W}x${H}@${HZ_INT}.000Hz" > /var/run/gamescope.mode
@@ -68,11 +71,11 @@ while true; do
 
     # Optional gamescope scaling / filter settings from batocera.conf
     GS_FILTER="$(/usr/bin/batocera-settings-get display.gamescope.filter 2>/dev/null)"
-    [ -n "$GS_FILTER" ] && GS_ARGS+=(-F "$GS_FILTER")
+    [ -n "$GS_FILTER" ] && [ "$GS_FILTER" != "auto" ] && GS_ARGS+=(-F "$GS_FILTER")
     GS_SCALER="$(/usr/bin/batocera-settings-get display.gamescope.scaler 2>/dev/null)"
-    [ -n "$GS_SCALER" ] && GS_ARGS+=(-S "$GS_SCALER")
+    [ -n "$GS_SCALER" ] && [ "$GS_SCALER" != "auto" ] && GS_ARGS+=(-S "$GS_SCALER")
     GS_SHARP="$(/usr/bin/batocera-settings-get display.gamescope.sharpness 2>/dev/null)"
-    [ -n "$GS_SHARP" ] && GS_ARGS+=(--fsr-sharpness "$GS_SHARP")
+    [ -n "$GS_SHARP" ] && [ "$GS_SHARP" != "auto" ] && GS_ARGS+=(--fsr-sharpness "$GS_SHARP")
 
     # Rotation from batocera.conf (0=normal, 1=90/right, 2=180/upsidedown, 3=270/left)
     ROTATION="$(/usr/bin/batocera-settings-get display.rotate 2>/dev/null)"
@@ -102,6 +105,8 @@ while true; do
         "${GS_ARGS[@]}" \
         -- /usr/bin/emulationstation-standalone >> "$log" 2>&1
 
-    # Only restart gamescope if ES specifically requested a restart
-    [ -e /tmp/restart.please ] || break
+    # Exit loop on shutdown/reboot or when S31emulationstation stop removes REBOOT_FLAG
+    if [ -e "/tmp/shutdown.please" ] || [ -e "/tmp/reboot.please" ] || [ ! -e "$REBOOT_FLAG" ]; then
+        break
+    fi
 done

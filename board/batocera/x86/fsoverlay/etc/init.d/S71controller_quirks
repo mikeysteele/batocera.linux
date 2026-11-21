@@ -80,6 +80,7 @@ do_start() {
 
 do_stop() {
     # Claw doesn't need any changes back, leave this for other potential quirks
+    :
 }
 
 case "$1" in

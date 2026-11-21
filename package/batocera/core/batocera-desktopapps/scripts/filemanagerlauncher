@@ -6,24 +6,34 @@ export XDG_CONFIG_DIRS=/etc/xdg
 # fix for exfat on HOME + pcmanfm
 export XDG_CACHE_HOME=/tmp/xdg_cache
 
-# Fix xterm via F4 is not previously set up
-python << EOF
-import configparser
+# Fix xterm via F4 if not previously set up
+python << 'EOF'
+import configparser, os
 F = '/userdata/system/.config/libfm/libfm.conf'
+os.makedirs(os.path.dirname(F), exist_ok=True)
 c = configparser.ConfigParser()
 c.read(F)
-try:
-   t = c['config']['terminal']
-except:
-   t = None
-if (not t or t == ''):
-   with open(F, 'w') as wf:
-     c['config']['terminal'] = 'xterm'
-     c.write(wf)
+if not c.has_section('config'):
+    c.add_section('config')
+if not c.get('config', 'terminal', fallback=''):
+    c.set('config', 'terminal', 'xterm')
+    with open(F, 'w') as wf:
+        c.write(wf)
+
+P = '/userdata/system/.config/pcmanfm/default/pcmanfm.conf'
+os.makedirs(os.path.dirname(P), exist_ok=True)
+pc = configparser.ConfigParser()
+pc.read(P)
+if not pc.has_section('ui'):
+    pc.add_section('ui')
+if pc.get('ui', 'maximized', fallback='') != '1':
+    pc.set('ui', 'maximized', '1')
+    with open(P, 'w') as wf:
+        pc.write(wf)
 EOF
 
 batocera-backglass disable
 batocera-mouse show
-DISPLAY=${DISPLAY:-:0.0} pcmanfm /userdata
+GDK_BACKEND=x11 DISPLAY=${DISPLAY:-:0.0} pcmanfm /userdata
 batocera-mouse hide
 batocera-backglass enable
