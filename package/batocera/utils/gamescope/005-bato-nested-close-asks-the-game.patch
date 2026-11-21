@@ -11,20 +11,15 @@
      {
 --- a/src/steamcompmgr.cpp
 +++ b/src/steamcompmgr.cpp
-@@ -947,6 +947,20 @@
+@@ -947,6 +947,15 @@
  	s_KeysToClose.push_back( eKey );
  }
  
-+// a host close asks the game to close like a window manager would, a second one quits
++// a host close asks the game to close like a window manager would, a second one force-kills the X11 client
 +static std::atomic<bool> s_bCloseFocusPending = false;
-+static std::atomic<bool> s_bCloseFocusSent = false;
++static Window s_CloseSentWindow = None;
 +void request_close_focus_window( void )
 +{
-+	if ( s_bCloseFocusSent )
-+	{
-+		raise( SIGTERM );
-+		return;
-+	}
 +	s_bCloseFocusPending = true;
 +	nudge_steamcompmgr();
 +}
@@ -32,7 +27,7 @@
  struct ignore {
  	struct ignore	*next;
  	unsigned long	sequence;
-@@ -10323,6 +10337,30 @@
+@@ -10323,6 +10331,35 @@
  		}
  #endif
  
@@ -42,21 +37,26 @@
 +			steamcompmgr_win_t *pCloseWindow = pCloseFocus ? pCloseFocus->focusWindow : nullptr;
 +			if ( pCloseWindow && pCloseWindow->type == steamcompmgr_win_type_t::XWAYLAND )
 +			{
-+				XEvent event = {0};
-+				event.xclient.type = ClientMessage;
-+				event.xclient.window = pCloseWindow->xwayland().id;
-+				event.xclient.message_type = pCloseWindow->xwayland().ctx->atoms.wm_protocols;
-+				event.xclient.format = 32;
-+				event.xclient.data.l[0] = pCloseWindow->xwayland().ctx->atoms.wm_delete_window;
-+				event.xclient.data.l[1] = CurrentTime;
++				if ( s_CloseSentWindow == pCloseWindow->xwayland().id )
++				{
++					XKillClient( pCloseWindow->xwayland().ctx->dpy, pCloseWindow->xwayland().id );
++					XFlush( pCloseWindow->xwayland().ctx->dpy );
++					s_CloseSentWindow = None;
++				}
++				else
++				{
++					XEvent event = {0};
++					event.xclient.type = ClientMessage;
++					event.xclient.window = pCloseWindow->xwayland().id;
++					event.xclient.message_type = pCloseWindow->xwayland().ctx->atoms.wm_protocols;
++					event.xclient.format = 32;
++					event.xclient.data.l[0] = pCloseWindow->xwayland().ctx->atoms.wm_delete_window;
++					event.xclient.data.l[1] = CurrentTime;
 +
-+				XSendEvent( pCloseWindow->xwayland().ctx->dpy, pCloseWindow->xwayland().id, False, NoEventMask, &event );
-+				XFlush( pCloseWindow->xwayland().ctx->dpy );
-+				s_bCloseFocusSent = true;
-+			}
-+			else
-+			{
-+				raise( SIGTERM );
++					XSendEvent( pCloseWindow->xwayland().ctx->dpy, pCloseWindow->xwayland().id, False, NoEventMask, &event );
++					XFlush( pCloseWindow->xwayland().ctx->dpy );
++					s_CloseSentWindow = pCloseWindow->xwayland().id;
++				}
 +			}
 +		}
 +

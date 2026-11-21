@@ -1,6 +1,14 @@
 --- a/src/wlserver.cpp
 +++ b/src/wlserver.cpp
-@@ -213,8 +213,17 @@ void xwayland_surface_commit(struct wlr_surface *wlr_surface) {
+@@ -33,6 +33,7 @@
+ #include <wlr/interfaces/wlr_keyboard.h>
+ #include <wlr/render/wlr_renderer.h>
+ #include <wlr/types/wlr_compositor.h>
++#include <wlr/types/wlr_subcompositor.h>
+ #include <wlr/types/wlr_keyboard.h>
+ #include <wlr/types/wlr_keyboard_group.h>
+ #include <wlr/types/wlr_pointer.h>
+@@ -213,8 +214,17 @@ void xwayland_surface_commit(struct wlr_surface *wlr_surface) {
  	{
  		if ( !wlserver_xdg_surface_info->bDoneConfigure )
  		{
@@ -19,7 +27,40 @@
  
  			if ( wlserver_xdg_surface_info->layer_surface )
  				wlr_layer_surface_v1_configure( wlserver_xdg_surface_info->layer_surface, g_nNestedWidth, g_nNestedHeight );
-@@ -2514,16 +2523,16 @@ void wlserver_keyboardfocus( struct wlr_surface *surface, bool bConstrain )
+@@ -311,6 +321,24 @@ static void wlserver_handle_key(struct wl_listener *listener, void *data)
+ 	}
+ #endif
+ 
++	if ( event->state == WL_KEYBOARD_KEY_STATE_PRESSED && keysym == XKB_KEY_F4 && ( wlr_keyboard_get_modifiers( keyboard ) & WLR_MODIFIER_ALT ) )
++	{
++		if ( wlserver.kb_focus_surface )
++		{
++			auto xdg = wlr_xdg_surface_try_from_wlr_surface( wlserver.kb_focus_surface );
++			if ( xdg && xdg->role == WLR_XDG_SURFACE_ROLE_TOPLEVEL && xdg->toplevel )
++			{
++				if ( !xdg->toplevel->app_id || strcmp( xdg->toplevel->app_id, "emulationstation" ) != 0 )
++				{
++					wlr_xdg_toplevel_send_close( xdg->toplevel );
++				}
++				return;
++			}
++		}
++		request_close_focus_window();
++		return;
++	}
++
+ 	// TODO: Remove the below hack when Steam is shipping
+ 	// `gamescope_action_binding_manager` in Steam Stable
+ 	// as it can just use a keybind to grab these always.
+@@ -2220,6 +2247,7 @@ bool wlserver_init() {
+ 	wlr_renderer_init_wl_display(wlserver.wlr.renderer, wlserver.display);
+ 
+ 	wlserver.wlr.compositor = wlr_compositor_create(wlserver.display, 5, wlserver.wlr.renderer);
++	wlr_subcompositor_create(wlserver.display);
+ 
+ 	wl_signal_add( &wlserver.wlr.compositor->events.new_surface, &new_surface_listener );
+ 
+@@ -2514,16 +2542,16 @@ void wlserver_keyboardfocus( struct wlr_surface *surface, bool bConstrain )
  			auto wl_surf = get_wl_surface_info( wlserver.kb_focus_surface );
  			if ( wl_surf && wl_surf->xdg_surface ) {
  				auto old_xdg = wlr_xdg_surface_try_from_wlr_surface( wlserver.kb_focus_surface );

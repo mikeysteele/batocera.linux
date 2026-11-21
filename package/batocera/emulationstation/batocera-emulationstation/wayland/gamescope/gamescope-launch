@@ -4,6 +4,7 @@ log="/var/log/gamescope.log"
 : > "$log"
 
 export XDG_RUNTIME_DIR=/var/run
+export GDK_BACKEND=x11
 REBOOT_FLAG="/var/run/emulationstation-standalone"
 
 # Wait briefly for a DRM card to appear

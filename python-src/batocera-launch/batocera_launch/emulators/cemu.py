@@ -593,5 +593,6 @@ class Cemu(Emulator):
                 'XDG_CACHE_HOME': CACHE,
                 'XDG_DATA_HOME': SAVES,
                 'SDL_JOYSTICK_HIDAPI': '0',
+                'GDK_BACKEND': 'x11',
             },
         )
