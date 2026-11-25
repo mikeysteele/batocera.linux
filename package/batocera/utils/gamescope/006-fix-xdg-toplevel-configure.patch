@@ -1,3 +1,65 @@
+--- a/src/backend.h
++++ b/src/backend.h
+@@ -382,6 +382,7 @@
+ 
+         // This will move to the connector and be deprecated soon.
+         virtual bool HackTemporarySetDynamicRefresh( int nRefresh ) = 0;
++        virtual void SetPreferredMode( int nWidth, int nHeight, int nRefreshmHz ) {}
+         virtual void HackUpdatePatchedEdid() = 0;
+ 
+         virtual bool NeedsFrameSync() const = 0;
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -4325,6 +4325,14 @@
+ 			return drm_set_refresh( &g_DRM, nRefresh );
+ 		}
+ 
++		virtual void SetPreferredMode( int nWidth, int nHeight, int nRefreshmHz ) override
++		{
++			g_DRM.preferred_width = nWidth;
++			g_DRM.preferred_height = nHeight;
++			g_DRM.preferred_refresh = nRefreshmHz;
++			DirtyState( true, true );
++		}
++
+ 		virtual void HackUpdatePatchedEdid() override
+ 		{
+ 			if ( !g_DRM.pConnector )
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -7280,21 +7280,30 @@
+ 			size_t server_idx = size_t{ xwayland_mode_ctl[ 0 ] };
+ 			int width = xwayland_mode_ctl[ 1 ];
+ 			int height = xwayland_mode_ctl[ 2 ];
+-			bool allowSuperRes = !!xwayland_mode_ctl[ 3 ];
++			uint32_t raw_flag = xwayland_mode_ctl[ 3 ];
++			bool allowSuperRes = !!raw_flag;
+ 
+ 			if ( !allowSuperRes )
+ 			{
+ 				width = std::min<int>(width, currentOutputWidth);
+ 				height = std::min<int>(height, currentOutputHeight);
+ 			}
+ 
++			int target_refresh_mhz = ( raw_flag >= 1000 ) ? (int)raw_flag : g_nOutputRefresh;
++			if ( server_idx == 0 && width > 0 && height > 0 )
++			{
++				g_nNestedWidth = width;
++				g_nNestedHeight = height;
++				GetBackend()->SetPreferredMode( width, height, ( raw_flag >= 1000 ) ? (int)raw_flag : 0 );
++			}
++
+ 			gamescope_xwayland_server_t *server = wlserver_get_xwayland_server( server_idx );
+ 			if ( server )
+ 			{
+ 				bool root_size_identical = server->ctx->root_width == width && server->ctx->root_height == height;
+ 
+ 				wlserver_lock();
+-				wlserver_set_xwayland_server_mode( server_idx, width, height, g_nOutputRefresh );
++				wlserver_set_xwayland_server_mode( server_idx, width, height, target_refresh_mhz );
+ 				wlserver_unlock();
+ 
+ 				if ( root_size_identical )
 --- a/src/wlserver.cpp
 +++ b/src/wlserver.cpp
 @@ -33,6 +33,7 @@
@@ -52,7 +114,7 @@
  	// TODO: Remove the below hack when Steam is shipping
  	// `gamescope_action_binding_manager` in Steam Stable
  	// as it can just use a keybind to grab these always.
-@@ -2220,6 +2247,7 @@ bool wlserver_init() {
+@@ -2220,6 +2248,7 @@ bool wlserver_init() {
  	wlr_renderer_init_wl_display(wlserver.wlr.renderer, wlserver.display);
  
  	wlserver.wlr.compositor = wlr_compositor_create(wlserver.display, 5, wlserver.wlr.renderer);
@@ -60,7 +122,7 @@
  
  	wl_signal_add( &wlserver.wlr.compositor->events.new_surface, &new_surface_listener );
  
-@@ -2514,16 +2542,16 @@ void wlserver_keyboardfocus( struct wlr_surface *surface, bool bConstrain )
+@@ -2514,16 +2543,16 @@ void wlserver_keyboardfocus( struct wlr_surface *surface, bool bConstrain )
  			auto wl_surf = get_wl_surface_info( wlserver.kb_focus_surface );
  			if ( wl_surf && wl_surf->xdg_surface ) {
  				auto old_xdg = wlr_xdg_surface_try_from_wlr_surface( wlserver.kb_focus_surface );
@@ -79,3 +141,30 @@
  					wlr_xdg_toplevel_set_activated( new_xdg->toplevel, true );
  			}
  		}
+@@ -3704,5 +3733,25 @@ void wlserver_set_xwayland_server_mode( size_t idx, int w, int h, int nRefreshmH
+ 		abort();
+ 	}
+ 
++	if ( idx == 0 && w > 0 && h > 0 )
++	{
++		std::unique_lock lock( g_wlserver_xdg_shell_windows_lock );
++		for ( auto &win : wlserver.xdg_wins )
++		{
++			if ( win->type != steamcompmgr_win_type_t::XDG )
++				continue;
++			auto &surf = win->xdg().surface;
++			if ( surf.xdg_surface && surf.xdg_surface->role == WLR_XDG_SURFACE_ROLE_TOPLEVEL && surf.xdg_surface->toplevel )
++			{
++				wlr_xdg_toplevel_set_size( surf.xdg_surface->toplevel, w, h );
++				wlr_xdg_surface_schedule_configure( surf.xdg_surface );
++			}
++			if ( surf.layer_surface )
++			{
++				wlr_layer_surface_v1_configure( surf.layer_surface, w, h );
++			}
++		}
++	}
++
+ 	wl_log.infof("Updating mode for xwayland server #%zu: %dx%d@%d", idx, w, h, gamescope::ConvertmHzToHz( nRefreshmHz ) );
+ }
+
