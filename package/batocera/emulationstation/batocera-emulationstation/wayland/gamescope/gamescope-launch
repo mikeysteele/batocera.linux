@@ -14,13 +14,17 @@ if [ -n "${VIDEO_OUTPUT}" ]; then
     echo "${VIDEO_OUTPUT}" > "${OUTPUT_FILE}"
 fi
 
-# Determine resolution/refresh from batocera.conf (es.resolution -> global.videomode -> bootconf es.resolution)
-ES_RES=$(batocera-settings-get-master es.resolution 2>/dev/null)
+# Determine resolution/refresh: /boot/batocera-boot.conf es.resolution (where ES saves System Settings -> Video Mode),
+# then batocera.conf es.resolution, then global.videomode
+ES_RES=""
+if [ -f "${BOOTCONF}" ]; then
+    ES_RES=$(batocera-settings-get-master -f "${BOOTCONF}" es.resolution 2>/dev/null)
+fi
+if [ -z "${ES_RES}" ]; then
+    ES_RES=$(batocera-settings-get-master es.resolution 2>/dev/null)
+fi
 if [ -z "${ES_RES}" ]; then
     ES_RES=$(batocera-settings-get-master global.videomode 2>/dev/null)
-fi
-if [ -z "${ES_RES}" ] && [ -f "${BOOTCONF}" ]; then
-    ES_RES=$(batocera-settings-get-master -f "${BOOTCONF}" es.resolution 2>/dev/null)
 fi
 
 case "${ES_RES}" in
@@ -78,11 +82,11 @@ if [ "${VRR_SETTING}" != "0" ]; then
     GAMESCOPE_ARGS="${GAMESCOPE_ARGS} --adaptive-sync"
 fi
 
-# Launch pipewire cleanly if present
+# Launch pipewire cleanly if present and not already running
 if [ -x /usr/bin/pipewire ]; then
-    /usr/bin/pipewire &
-    /usr/bin/wireplumber &
-    /usr/bin/pipewire-pulse &
+    pgrep -x pipewire >/dev/null || /usr/bin/pipewire &
+    pgrep -x wireplumber >/dev/null || /usr/bin/wireplumber &
+    pgrep -x pipewire-pulse >/dev/null || /usr/bin/pipewire-pulse &
 fi
 
 exec /usr/bin/gamescope ${GAMESCOPE_ARGS} -- /usr/bin/emulationstation-standalone
