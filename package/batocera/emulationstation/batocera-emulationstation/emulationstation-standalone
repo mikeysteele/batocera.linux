@@ -260,9 +260,12 @@ while [ -e "${REBOOT_FLAG}" ]; do
         echo "Standalone: Docked mode - applying minTomaxResolution for ${DOCKED_OUTPUT1}." >> "$log"
         batocera-resolution --screen "${DOCKED_OUTPUT1}" minTomaxResolution
     else
-        ## The resolution for the first screen is on the boot file so that it is easier to change it
+        ## The resolution for the first screen is on batocera.conf (saved by ES) or the boot file
         ## It is not needed for other screens
-        bootresolution="$(batocera-settings-get-master -f "$BOOTCONF" es.resolution)"
+        bootresolution="$(batocera-settings-get-master es.resolution)"
+        if [ -z "${bootresolution}" ]; then
+            bootresolution="$(batocera-settings-get-master -f "$BOOTCONF" es.resolution)"
+        fi
         if [ -z "${bootresolution}" ]; then
             echo "Standalone: No resolution in boot config for '${settings_output}'. Using minTomaxResolution-secure." >> "$log"
             batocera-resolution --screen "${settings_output}" minTomaxResolution-secure

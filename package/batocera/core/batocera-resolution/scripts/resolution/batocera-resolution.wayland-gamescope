@@ -209,8 +209,14 @@ _get_current_mode_string() {
 
 _apply_gamescope_mode() {
     local mode="$1"
-    local res w h hz mhz
+    local cur res w h hz mhz
     [ -n "${mode}" ] || return 1
+    if [ -f "${MODE_FILE}" ]; then
+        cur=$(head -n1 "${MODE_FILE}" 2>/dev/null)
+        if [ "${cur}" = "${mode}" ]; then
+            return 0
+        fi
+    fi
     echo "${mode}" > "${MODE_FILE}"
     res=$(echo "${mode}" | cut -d'@' -f1)
     w=$(echo "${res}" | cut -dx -f1)
@@ -289,7 +295,6 @@ f_minTomaxResolution() {
     if echo "${cur_w}" | grep -qE '^[0-9]+$' && echo "${cur_h}" | grep -qE '^[0-9]+$'; then
         cur_pixels=$((cur_w * cur_h))
         if [ "${cur_pixels}" -le "${max_pixels}" ]; then
-            _apply_gamescope_mode "${cur_mode}"
             return 0
         fi
     fi
@@ -411,9 +416,18 @@ case "${ACTION}" in
                 fi
                 ;;
             *)
-                res="${MODE_TO_SET%%.*}"
-                ref="${MODE_TO_SET#*.}"
-                if [ "${ref}" = "${MODE_TO_SET}" ]; then
+                if echo "${MODE_TO_SET}" | grep -q '@'; then
+                    res="${MODE_TO_SET%%@*}"
+                    ref="${MODE_TO_SET#*@}"
+                    ref="${ref%Hz}"
+                else
+                    res="${MODE_TO_SET%%.*}"
+                    ref="${MODE_TO_SET#*.}"
+                    if [ "${ref}" = "${MODE_TO_SET}" ]; then
+                        ref=""
+                    fi
+                fi
+                if [ -z "${ref}" ]; then
                     _apply_gamescope_mode "${res}@60.000Hz"
                 else
                     hz=$(awk -v r="${ref}" 'BEGIN { want = (index(r, ".") || r < 1000) ? r + 0 : r / 1000; printf "%.3f\n", want }')

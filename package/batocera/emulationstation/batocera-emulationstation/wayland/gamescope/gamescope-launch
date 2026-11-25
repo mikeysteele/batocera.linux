@@ -1,86 +1,25 @@
-#!/bin/sh
+#!/bin/bash
 # Launch gamescope as the standalone DRM/KMS compositor wrapping emulationstation-standalone
+
+LOG="/var/log/gamescope.log"
+: > "${LOG}"
 
 BOOTCONF="/boot/batocera-boot.conf"
 MODE_FILE="/var/run/gamescope.mode"
 OUTPUT_FILE="/var/run/gamescope.output"
+ROT_FILE="/var/run/gamescope.rotation"
+REBOOT_FLAG="/var/run/emulationstation-standalone"
 
-GAMESCOPE_ARGS="--backend drm --expose-wayland --force-windows-fullscreen -s 1.0 -C 3000"
+export XDG_RUNTIME_DIR=/var/run
+export GDK_BACKEND=x11
 
-# Determine preferred video output if configured
-VIDEO_OUTPUT=$(batocera-settings-get-master global.videooutput 2>/dev/null)
-if [ -n "${VIDEO_OUTPUT}" ]; then
-    GAMESCOPE_ARGS="${GAMESCOPE_ARGS} -O ${VIDEO_OUTPUT}"
-    echo "${VIDEO_OUTPUT}" > "${OUTPUT_FILE}"
-fi
-
-# Determine resolution/refresh: /boot/batocera-boot.conf es.resolution (where ES saves System Settings -> Video Mode),
-# then batocera.conf es.resolution, then global.videomode
-ES_RES=""
-if [ -f "${BOOTCONF}" ]; then
-    ES_RES=$(batocera-settings-get-master -f "${BOOTCONF}" es.resolution 2>/dev/null)
-fi
-if [ -z "${ES_RES}" ]; then
-    ES_RES=$(batocera-settings-get-master es.resolution 2>/dev/null)
-fi
-if [ -z "${ES_RES}" ]; then
-    ES_RES=$(batocera-settings-get-master global.videomode 2>/dev/null)
-fi
-
-case "${ES_RES}" in
-    ""|"default")
-        # Default when unset: cap at 1920x1080 matching emulationstation-standalone's minTomaxResolution-secure
-        GAMESCOPE_ARGS="${GAMESCOPE_ARGS} -W 1920 -H 1080 -w 1920 -h 1080"
-        echo "1920x1080@60.000Hz" > "${MODE_FILE}"
-        ;;
-    "auto")
-        # Explicit auto: let gamescope pick the display's preferred native DRM mode (e.g. 4K)
-        rm -f "${MODE_FILE}"
-        ;;
-    max-*)
-        MAX_DIM="${ES_RES#max-}"
-        W=$(echo "${MAX_DIM}" | cut -dx -f1)
-        H=$(echo "${MAX_DIM}" | cut -dx -f2)
-        if echo "${W}" | grep -qE '^[0-9]+$' && echo "${H}" | grep -qE '^[0-9]+$'; then
-            GAMESCOPE_ARGS="${GAMESCOPE_ARGS} -W ${W} -H ${H} -w ${W} -h ${H}"
-            echo "${W}x${H}@60.000Hz" > "${MODE_FILE}"
-        fi
-        ;;
-    *)
-        # Format: WxH.mHz or WxH.Hz or WxH
-        RES_PART="${ES_RES%%.*}"
-        REF_PART="${ES_RES#*.}"
-        W=$(echo "${RES_PART}" | cut -dx -f1)
-        H=$(echo "${RES_PART}" | cut -dx -f2)
-        if echo "${W}" | grep -qE '^[0-9]+$' && echo "${H}" | grep -qE '^[0-9]+$'; then
-            GAMESCOPE_ARGS="${GAMESCOPE_ARGS} -W ${W} -H ${H} -w ${W} -h ${H}"
-            if [ "${REF_PART}" != "${ES_RES}" ] && [ -n "${REF_PART}" ]; then
-                HZ_INT=$(awk -v r="${REF_PART}" 'BEGIN { want = (index(r, ".") || r < 1000) ? r + 0 : r / 1000; printf "%.0f\n", want }')
-                HZ_FLT=$(awk -v r="${REF_PART}" 'BEGIN { want = (index(r, ".") || r < 1000) ? r + 0 : r / 1000; printf "%.3f\n", want }')
-                if [ -n "${HZ_INT}" ] && [ "${HZ_INT}" -gt 0 ] 2>/dev/null; then
-                    GAMESCOPE_ARGS="${GAMESCOPE_ARGS} -r ${HZ_INT}"
-                    echo "${W}x${H}@${HZ_FLT}Hz" > "${MODE_FILE}"
-                else
-                    echo "${W}x${H}@60.000Hz" > "${MODE_FILE}"
-                fi
-            else
-                echo "${W}x${H}@60.000Hz" > "${MODE_FILE}"
-            fi
-        fi
-        ;;
-esac
-
-# Optional HDR
-HDR_SETTING=$(batocera-settings-get-master global.hdr 2>/dev/null)
-if [ "${HDR_SETTING}" = "1" ]; then
-    GAMESCOPE_ARGS="${GAMESCOPE_ARGS} --hdr-enabled"
-fi
-
-# Optional VRR / Adaptive Sync
-VRR_SETTING=$(batocera-settings-get-master global.vrr 2>/dev/null)
-if [ "${VRR_SETTING}" != "0" ]; then
-    GAMESCOPE_ARGS="${GAMESCOPE_ARGS} --adaptive-sync"
-fi
+# Wait briefly for a DRM card to appear
+i=0
+while [ "${i}" -lt 50 ]; do
+    ls /dev/dri/card[0-9]* >/dev/null 2>&1 && break
+    sleep 0.1
+    i=$((i + 1))
+done
 
 # Launch pipewire cleanly if present and not already running
 if [ -x /usr/bin/pipewire ]; then
@@ -89,4 +28,130 @@ if [ -x /usr/bin/pipewire ]; then
     pgrep -x pipewire-pulse >/dev/null || /usr/bin/pipewire-pulse &
 fi
 
-exec /usr/bin/gamescope ${GAMESCOPE_ARGS} -- /usr/bin/emulationstation-standalone
+while true; do
+    rm -f /tmp/restart.please "${MODE_FILE}"
+
+    # Keyboard layout from batocera.conf
+    settings_lang="$(/usr/bin/batocera-settings-get system.kblayout 2>/dev/null)"
+    if [ -n "${settings_lang}" ]; then
+        export XKB_DEFAULT_LAYOUT="${settings_lang%%_*}"
+        if [ "${settings_lang}" != "${XKB_DEFAULT_LAYOUT}" ]; then
+            export XKB_DEFAULT_VARIANT="${settings_lang#*_}"
+        else
+            unset XKB_DEFAULT_VARIANT
+        fi
+    fi
+
+    GS_ARGS=(--backend drm --expose-wayland --force-windows-fullscreen -s 1.0 -C 3000)
+
+    # Determine preferred video output if configured
+    VIDEO_OUTPUT=$(batocera-settings-get-master global.videooutput 2>/dev/null)
+    if [ -n "${VIDEO_OUTPUT}" ] && [ "${VIDEO_OUTPUT}" != "auto" ]; then
+        GS_ARGS+=(-O "${VIDEO_OUTPUT}")
+        echo "${VIDEO_OUTPUT}" > "${OUTPUT_FILE}"
+    else
+        rm -f "${OUTPUT_FILE}"
+    fi
+
+    # Determine resolution/refresh: batocera.conf es.resolution (where ES saves System Settings -> Video Mode),
+    # then /boot/batocera-boot.conf es.resolution, then global.videomode
+    ES_RES=$(batocera-settings-get-master es.resolution 2>/dev/null)
+    if [ -z "${ES_RES}" ] && [ -f "${BOOTCONF}" ]; then
+        ES_RES=$(batocera-settings-get-master -f "${BOOTCONF}" es.resolution 2>/dev/null)
+    fi
+    if [ -z "${ES_RES}" ]; then
+        ES_RES=$(batocera-settings-get-master global.videomode 2>/dev/null)
+    fi
+
+    case "${ES_RES}" in
+        ""|"default")
+            # Default when unset: cap at 1920x1080 matching emulationstation-standalone's minTomaxResolution-secure
+            GS_ARGS+=(-W 1920 -H 1080 -w 1920 -h 1080)
+            echo "1920x1080@60.000Hz" > "${MODE_FILE}"
+            ;;
+        "auto")
+            # Explicit auto: let gamescope pick the display's preferred native DRM mode (e.g. 4K)
+            rm -f "${MODE_FILE}"
+            ;;
+        max-*)
+            MAX_DIM="${ES_RES#max-}"
+            W=$(echo "${MAX_DIM}" | cut -dx -f1)
+            H=$(echo "${MAX_DIM}" | cut -dx -f2)
+            if echo "${W}" | grep -qE '^[0-9]+$' && echo "${H}" | grep -qE '^[0-9]+$'; then
+                GS_ARGS+=(-W "${W}" -H "${H}" -w "${W}" -h "${H}")
+                echo "${W}x${H}@60.000Hz" > "${MODE_FILE}"
+            fi
+            ;;
+        *)
+            # Format: WxH@Hz, WxH@HzHz, WxH.mHz, WxH.Hz, or WxH
+            if echo "${ES_RES}" | grep -q '@'; then
+                RES_PART="${ES_RES%%@*}"
+                REF_PART="${ES_RES#*@}"
+                REF_PART="${REF_PART%Hz}"
+            else
+                RES_PART="${ES_RES%%.*}"
+                REF_PART="${ES_RES#*.}"
+                if [ "${REF_PART}" = "${ES_RES}" ]; then
+                    REF_PART=""
+                fi
+            fi
+            W=$(echo "${RES_PART}" | cut -dx -f1)
+            H=$(echo "${RES_PART}" | cut -dx -f2)
+            if echo "${W}" | grep -qE '^[0-9]+$' && echo "${H}" | grep -qE '^[0-9]+$'; then
+                GS_ARGS+=(-W "${W}" -H "${H}" -w "${W}" -h "${H}")
+                if [ -n "${REF_PART}" ]; then
+                    HZ_INT=$(awk -v r="${REF_PART}" 'BEGIN { want = (index(r, ".") || r < 1000) ? r + 0 : r / 1000; printf "%.0f\n", want }')
+                    HZ_FLT=$(awk -v r="${REF_PART}" 'BEGIN { want = (index(r, ".") || r < 1000) ? r + 0 : r / 1000; printf "%.3f\n", want }')
+                    if [ -n "${HZ_INT}" ] && [ "${HZ_INT}" -gt 0 ] 2>/dev/null; then
+                        GS_ARGS+=(-r "${HZ_INT}")
+                        echo "${W}x${H}@${HZ_FLT}Hz" > "${MODE_FILE}"
+                    else
+                        echo "${W}x${H}@60.000Hz" > "${MODE_FILE}"
+                    fi
+                else
+                    echo "${W}x${H}@60.000Hz" > "${MODE_FILE}"
+                fi
+            fi
+            ;;
+    esac
+
+    # Optional gamescope scaling / filter settings from batocera.conf
+    GS_FILTER="$(/usr/bin/batocera-settings-get display.gamescope.filter 2>/dev/null)"
+    [ -n "${GS_FILTER}" ] && [ "${GS_FILTER}" != "auto" ] && GS_ARGS+=(-F "${GS_FILTER}")
+    GS_SCALER="$(/usr/bin/batocera-settings-get display.gamescope.scaler 2>/dev/null)"
+    [ -n "${GS_SCALER}" ] && [ "${GS_SCALER}" != "auto" ] && GS_ARGS+=(-S "${GS_SCALER}")
+    GS_SHARP="$(/usr/bin/batocera-settings-get display.gamescope.sharpness 2>/dev/null)"
+    [ -n "${GS_SHARP}" ] && [ "${GS_SHARP}" != "auto" ] && GS_ARGS+=(--fsr-sharpness "${GS_SHARP}")
+
+    # Rotation from batocera.conf (0=normal, 1=90/right, 2=180/upsidedown, 3=270/left)
+    ROTATION="$(/usr/bin/batocera-settings-get display.rotate 2>/dev/null)"
+    case "${ROTATION}" in
+        1) GS_ARGS+=(--force-orientation right); echo "1" > "${ROT_FILE}" ;;
+        2) GS_ARGS+=(--force-orientation upsidedown); echo "2" > "${ROT_FILE}" ;;
+        3) GS_ARGS+=(--force-orientation left); echo "3" > "${ROT_FILE}" ;;
+        *) echo "0" > "${ROT_FILE}" ;;
+    esac
+
+    # Optional HDR
+    HDR_SETTING=$(batocera-settings-get-master display.hdr 2>/dev/null)
+    [ -z "${HDR_SETTING}" ] && HDR_SETTING=$(batocera-settings-get-master global.hdr 2>/dev/null)
+    if [ "${HDR_SETTING}" = "1" ]; then
+        GS_ARGS+=(--hdr-enabled)
+    fi
+
+    # Optional VRR / Adaptive Sync
+    VRR_SETTING=$(batocera-settings-get-master display.vrr 2>/dev/null)
+    [ -z "${VRR_SETTING}" ] && VRR_SETTING=$(batocera-settings-get-master global.vrr 2>/dev/null)
+    if [ "${VRR_SETTING}" != "0" ]; then
+        GS_ARGS+=(--adaptive-sync)
+    fi
+
+    echo "Launching gamescope with args: ${GS_ARGS[*]}" >> "${LOG}"
+
+    /usr/bin/gamescope "${GS_ARGS[@]}" -- /usr/bin/emulationstation-standalone >> "${LOG}" 2>&1
+
+    # Exit loop on shutdown/reboot or when S31emulationstation stop removes REBOOT_FLAG
+    if [ -e "/tmp/shutdown.please" ] || [ -e "/tmp/reboot.please" ] || [ ! -e "${REBOOT_FLAG}" ]; then
+        break
+    fi
+done
