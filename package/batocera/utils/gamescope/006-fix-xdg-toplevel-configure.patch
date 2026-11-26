@@ -10,7 +10,30 @@
          virtual bool NeedsFrameSync() const = 0;
 --- a/src/Backends/DRMBackend.cpp
 +++ b/src/Backends/DRMBackend.cpp
-@@ -4325,6 +4325,14 @@
+@@ -3196,12 +3196,21 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
+ 	const bool bIsVRRCapable = drm->pConnector && drm->pConnector->GetProperties().vrr_capable && !!drm->pConnector->GetProperties().vrr_capable->GetCurrentValue();
+ 	const bool bHasVRREnable = drm->pCRTC && drm->pCRTC->GetProperties().VRR_ENABLED;
+ 
+-	const bool bVRREnabled = bIsVRRCapable && bHasVRREnable && frameInfo->allowVRR;
++	const uint64_t ulPendingModeId = drm->pending.mode_id ? drm->pending.mode_id->GetBlobValue() : 0lu;
++	const bool bModeChanging = drm->pCRTC && drm->pCRTC->GetProperties().MODE_ID &&
++		drm->pCRTC->GetProperties().MODE_ID->GetCurrentValue() != ulPendingModeId;
++
++	// Disable VRR during a mode change so the new HDMI/DP timing locks cleanly,
++	// then re-enable VRR seamlessly on the following frame.
++	const bool bWantsVRR = bIsVRRCapable && bHasVRREnable && frameInfo->allowVRR;
++	const bool bVRREnabled = bWantsVRR && !bModeChanging;
+ 	if ( bIsVRRCapable )
+ 	{
+ 		if ( bVRREnabled != !!drm->pCRTC->GetProperties().VRR_ENABLED->GetCurrentValue() )
+ 			drm->needs_modeset = true;
+ 	}
++	if ( bWantsVRR && bModeChanging )
++		force_repaint();
+ 
+ 	drm_colorspace uColorimetry = DRM_MODE_COLORIMETRY_DEFAULT;
+ 
+@@ -4325,6 +4334,14 @@
  			return drm_set_refresh( &g_DRM, nRefresh );
  		}
  

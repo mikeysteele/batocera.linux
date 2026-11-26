@@ -142,7 +142,7 @@ while true; do
     # Optional VRR / Adaptive Sync
     VRR_SETTING=$(batocera-settings-get-master display.vrr 2>/dev/null)
     [ -z "${VRR_SETTING}" ] && VRR_SETTING=$(batocera-settings-get-master global.vrr 2>/dev/null)
-    if [ "${VRR_SETTING}" != "0" ]; then
+    if [ "${VRR_SETTING}" = "1" ]; then
         GS_ARGS+=(--adaptive-sync)
     fi
 
